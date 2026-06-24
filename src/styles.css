@@ -378,6 +378,16 @@ h1 {
   white-space: nowrap;
 }
 
+.plants .section-title {
+  align-items: flex-start;
+}
+
+.plants .section-title span {
+  max-width: 68%;
+  white-space: normal;
+  text-align: right;
+}
+
 .regions,
 .plants {
   margin-top: 0.75rem;

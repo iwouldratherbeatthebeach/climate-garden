@@ -297,7 +297,8 @@ function selectCountry(feature) {
     name: countryName(properties),
     feature
   };
-  $("#countryFilter").textContent = `Origin: ${state.selectedCountry.name}`;
+  $("#countryFilter").textContent =
+    `All matching origins · prioritizing ${state.selectedCountry.name}`;
   $("#clearCountry").hidden = false;
   refreshCountryStyles();
   renderRegions();
@@ -406,6 +407,44 @@ function climateLabel(plant) {
   return `${formatTemperatureRange(plant.summerHighMinC, plant.summerHighMaxC)} high, ${plant.humidityMin}-${plant.humidityMax}% RH`;
 }
 
+function matchingCountryFeatures() {
+  return state.countryFeatures.filter(
+    (feature) => Number(feature.properties.climateSimilarity) >= 60
+  );
+}
+
+function matchingCountryCodes() {
+  return new Set(
+    matchingCountryFeatures()
+      .map((feature) => countryCode(feature.properties))
+      .filter(Boolean)
+  );
+}
+
+function plantMatchingOrigins(plant) {
+  const codes = matchingCountryCodes();
+  return (plant.originCountries ?? []).filter((code) => codes.has(code));
+}
+
+function plantOriginLabel(plant) {
+  const matchedCodes = plantMatchingOrigins(plant);
+  if (!matchedCodes.length) return plant.origin;
+  const names = matchedCodes
+    .map((code) => {
+      const feature = state.countryFeatures.find(
+        (item) => countryCode(item.properties) === code
+      );
+      return feature ? countryName(feature.properties) : code;
+    })
+    .sort((a, b) => {
+      if (a === state.selectedCountry?.name) return -1;
+      if (b === state.selectedCountry?.name) return 1;
+      return a.localeCompare(b);
+    });
+  const visible = names.slice(0, 2).join(", ");
+  return names.length > 2 ? `From ${visible} +${names.length - 2}` : `From ${visible}`;
+}
+
 function renderRegions() {
   if (!state.zone) {
     $("#regionMetric").textContent = "--";
@@ -415,8 +454,7 @@ function renderRegions() {
     return;
   }
 
-  const countries = state.countryFeatures
-    .filter((feature) => Number(feature.properties.climateSimilarity) >= 60)
+  const countries = matchingCountryFeatures()
     .sort(
       (a, b) =>
         b.properties.climateSimilarity - a.properties.climateSimilarity ||
@@ -428,7 +466,6 @@ function renderRegions() {
     ? `${countries.length} countries`
     : "Calculating...";
   $("#regionsList").innerHTML = countries
-    .slice(0, 16)
     .map(
       (feature) => `
         <article class="region-card ${
@@ -456,6 +493,34 @@ function renderRegions() {
   });
 }
 
+function diversifyPlants(plants, matchedCodes) {
+  const diversified = [];
+  const usedSpecies = new Set();
+  const orderedCodes = [...matchedCodes].sort((a, b) => {
+    if (a === state.selectedCountry?.code) return -1;
+    if (b === state.selectedCountry?.code) return 1;
+    return a.localeCompare(b);
+  });
+
+  orderedCodes.forEach((code) => {
+    const candidate = plants.find(
+      (plant) =>
+        !usedSpecies.has(plant.scientificName) &&
+        (plant.originCountries ?? []).includes(code)
+    );
+    if (!candidate) return;
+    diversified.push(candidate);
+    usedSpecies.add(candidate.scientificName);
+  });
+
+  plants.forEach((plant) => {
+    if (usedSpecies.has(plant.scientificName)) return;
+    diversified.push(plant);
+    usedSpecies.add(plant.scientificName);
+  });
+  return diversified;
+}
+
 function renderPlants() {
   if (!state.zone || !state.normals) {
     $("#plantCount").textContent = "Search first";
@@ -463,31 +528,51 @@ function renderPlants() {
       `<p class="empty">Enter your city before browsing recommendations. Plants are only shown after climate suitability can be checked.</p>`;
     return;
   }
-
-  let plants = state.plants;
-  if (state.activeCategory !== "all") {
-    plants = plants.filter((plant) => plant.category === state.activeCategory);
+  if (!state.regionClimateLoaded) {
+    $("#plantCount").textContent = "Comparing origins...";
+    $("#plantsList").innerHTML =
+      `<p class="empty">Climate matches are loading. Suitable plants from every green and yellow country will appear here.</p>`;
+    return;
   }
 
-  if (state.selectedCountry) {
-    plants = plants.filter((plant) =>
-      (plant.originCountries ?? []).includes(state.selectedCountry.code)
-    );
+  const matchedCodes = matchingCountryCodes();
+  let plants = state.plants.filter((plant) =>
+    (plant.originCountries ?? []).some((code) => matchedCodes.has(code))
+  );
+  if (state.activeCategory !== "all") {
+    plants = plants.filter((plant) => plant.category === state.activeCategory);
   }
 
   plants = plants
     .map((plant) => ({ ...plant, match: plantSuitability(plant) }))
     .filter((plant) => plant.match.suitable)
-    .map((plant) => ({ ...plant, score: plant.match.score }))
+    .map((plant) => ({
+      ...plant,
+      score:
+        plant.match.score +
+        (state.selectedCountry &&
+        (plant.originCountries ?? []).includes(state.selectedCountry.code)
+          ? 30
+          : 0)
+    }))
     .sort((a, b) => b.score - a.score || a.commonName.localeCompare(b.commonName))
     .filter(
       (plant, index, all) =>
         all.findIndex((candidate) => candidate.scientificName === plant.scientificName) === index
-    )
-    .slice(0, 60);
+    );
 
-  const originLabel = state.selectedCountry ? ` from ${state.selectedCountry.name}` : "";
-  $("#plantCount").textContent = `${plants.length} suitable${originLabel}`;
+  const total = plants.length;
+  const representedCodes = new Set(
+    plants.flatMap((plant) =>
+      (plant.originCountries ?? []).filter((code) => matchedCodes.has(code))
+    )
+  );
+  plants = diversifyPlants(plants, matchedCodes).slice(0, 100);
+  const priorityLabel = state.selectedCountry
+    ? ` · ${state.selectedCountry.name} prioritized`
+    : "";
+  $("#plantCount").textContent =
+    `${plants.length} of ${total} suitable · ${representedCodes.size}/${matchedCodes.size} countries represented${priorityLabel}`;
   $("#plantsList").innerHTML =
     plants
       .map(
@@ -506,14 +591,14 @@ function renderPlants() {
               <span>${plant.sun}</span>
               <span>${plant.water}</span>
               <span>${climateLabel(plant)}</span>
-              <span>${plant.origin}</span>
+              <span>${plantOriginLabel(plant)}</span>
               <span>${plant.climateForm} profile</span>
             </div>
           </article>
         `
       )
       .join("") ||
-    `<p class="empty">No plants from this origin pass the current zone, heat, and humidity checks in this category. Try another plant type or country.</p>`;
+    `<p class="empty">No plants from the highlighted climate-match countries pass the current zone, heat, and humidity checks in this category.</p>`;
 }
 
 function renderAll() {
@@ -785,7 +870,7 @@ async function runSearch(city) {
     state.coldestC = climate.coldestC;
     state.normals = climate.normals;
     state.selectedCountry = null;
-    $("#countryFilter").textContent = "All origins";
+    $("#countryFilter").textContent = "All green and yellow origins";
     $("#clearCountry").hidden = true;
 
     $("#placeTitle").textContent = `${place.name}${place.admin1 ? `, ${place.admin1}` : ""}`;
@@ -856,7 +941,7 @@ async function init() {
 
   $("#clearCountry").addEventListener("click", () => {
     state.selectedCountry = null;
-    $("#countryFilter").textContent = "All origins";
+    $("#countryFilter").textContent = "All green and yellow origins";
     $("#clearCountry").hidden = true;
     refreshCountryStyles();
     renderRegions();
