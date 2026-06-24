@@ -15,11 +15,24 @@ npm run dev
 npm run build
 ```
 
-Cloudflare Pages settings:
+For a Git-integrated Cloudflare Pages project, use these build settings:
 
 - Build command: `npm run build`
 - Build output directory: `dist`
 - Node version: 24 or current LTS
+
+If the Cloudflare project uses a separate deploy command, set it to:
+
+```bash
+npm run deploy
+```
+
+Do not use `npx wrangler deploy` for this project. That command deploys a
+Worker. The `deploy` script builds the site and runs:
+
+```bash
+npx wrangler pages deploy dist --project-name=climate-garden-map
+```
 
 ## Data model
 
