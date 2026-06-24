@@ -116,6 +116,14 @@ function cToF(c) {
   return c * 1.8 + 32;
 }
 
+function formatTemperature(celsius, digits = 1) {
+  return `${celsius.toFixed(digits)} C / ${cToF(celsius).toFixed(digits)} F`;
+}
+
+function formatTemperatureRange(minC, maxC) {
+  return `${minC}-${maxC} C / ${cToF(minC).toFixed(0)}-${cToF(maxC).toFixed(0)} F`;
+}
+
 function zoneRangeLabel(min, max) {
   return `Zones ${min}-${max}`;
 }
@@ -374,7 +382,7 @@ function plantSuitability(plant) {
     plant.humidityMin,
     plant.humidityMax
   );
-  const suitable = (seasonal || zoneFits) && heatDistance <= 3 && humidityDistance <= 12;
+  const suitable = (seasonal || zoneFits) && heatDistance <= 7 && humidityDistance <= 22;
   const score =
     100 -
     heatDistance * 6 -
@@ -383,7 +391,9 @@ function plantSuitability(plant) {
     (plant.popularity ?? 0) / 2;
   const reasons = [
     seasonal ? "Seasonal crop" : zoneFits ? `Hardy in zone ${state.zoneLabel}` : "Winter mismatch",
-    heatDistance === 0 ? "Heat match" : `${heatDistance.toFixed(0)} C outside preferred high`,
+    heatDistance === 0
+      ? "Heat match"
+      : `${heatDistance.toFixed(0)} C / ${(heatDistance * 1.8).toFixed(0)} F outside preferred high`,
     humidityDistance === 0
       ? "Humidity match"
       : `${humidityDistance.toFixed(0)}% outside preferred humidity`
@@ -393,7 +403,7 @@ function plantSuitability(plant) {
 
 function climateLabel(plant) {
   if (!plant.summerHighMinC || !plant.summerHighMaxC) return "";
-  return `${plant.summerHighMinC}-${plant.summerHighMaxC} C high, ${plant.humidityMin}-${plant.humidityMax}% RH`;
+  return `${formatTemperatureRange(plant.summerHighMinC, plant.summerHighMaxC)} high, ${plant.humidityMin}-${plant.humidityMax}% RH`;
 }
 
 function renderRegions() {
@@ -681,7 +691,7 @@ function monthlyValues(parameter) {
 
 async function fetchPowerNormals(place) {
   const params = new URLSearchParams({
-    parameters: "T2M_MAX,T2M_MIN,RH2M",
+    parameters: "T2M_MAX_AVG,T2M_MIN_AVG,RH2M",
     community: "AG",
     longitude: String(place.longitude),
     latitude: String(place.latitude),
@@ -693,8 +703,8 @@ async function fetchPowerNormals(place) {
   if (!response.ok) throw new Error("Could not fetch NASA POWER climate normals.");
   const data = await response.json();
   const parameters = data.properties?.parameter ?? {};
-  const maxValues = monthlyValues(parameters.T2M_MAX);
-  const minValues = monthlyValues(parameters.T2M_MIN);
+  const maxValues = monthlyValues(parameters.T2M_MAX_AVG);
+  const minValues = monthlyValues(parameters.T2M_MIN_AVG);
   const humidityValues = monthlyValues(parameters.RH2M);
 
   if (!maxValues.length || !minValues.length || !humidityValues.length) {
@@ -712,7 +722,7 @@ async function fetchPowerNormals(place) {
 
 async function hydrateRegionNormals() {
   if (state.regionClimateLoaded) return;
-  const cacheKey = "terratwin-region-normals-v2";
+  const cacheKey = "terratwin-region-normals-v3";
   const cached = JSON.parse(localStorage.getItem(cacheKey) || "{}");
   worldRegions.forEach((region) => {
     if (cached[region.name]) region.normals = cached[region.name];
@@ -782,9 +792,9 @@ async function runSearch(city) {
     $("#climateSummary").textContent =
       `USDA zone is estimated from recent historical annual low extremes. High, low, and humidity normals come from NASA POWER climatology near ${place.latitude.toFixed(2)}, ${place.longitude.toFixed(2)}.`;
     $("#zoneMetric").textContent = zone.label;
-    $("#coldMetric").textContent = `${climate.coldestC.toFixed(1)} C`;
-    $("#highMetric").textContent = `${climate.normals.warmestHighC.toFixed(1)} C`;
-    $("#lowMetric").textContent = `${climate.normals.coolestNormalLowC.toFixed(1)} C`;
+    $("#coldMetric").textContent = formatTemperature(climate.coldestC);
+    $("#highMetric").textContent = formatTemperature(climate.normals.warmestHighC);
+    $("#lowMetric").textContent = formatTemperature(climate.normals.coolestNormalLowC);
     $("#humidityMetric").textContent = `${climate.normals.meanHumidity.toFixed(0)}%`;
 
     renderCityPoint(place);

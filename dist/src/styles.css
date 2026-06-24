@@ -306,7 +306,9 @@ h1 {
 .metric-grid strong {
   display: block;
   margin-top: 0.18rem;
-  font-size: 1.05rem;
+  font-size: 0.95rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .filters {

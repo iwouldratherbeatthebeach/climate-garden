@@ -24,6 +24,21 @@ const categoryLabels = {
   decorative: "Decorative"
 };
 
+const usStates = {
+  AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California",
+  CO: "Colorado", CT: "Connecticut", DE: "Delaware", FL: "Florida", GA: "Georgia",
+  HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa",
+  KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland",
+  MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi",
+  MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada",
+  NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico", NY: "New York",
+  NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma",
+  OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina",
+  SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont",
+  VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin",
+  WY: "Wyoming", DC: "District of Columbia"
+};
+
 const worldRegions = [
   ["Pacific Northwest", 47.6, -122.3, 8, 9, "moist", "cool", "Mild, wet winters"],
   ["Northern California Coast", 38.4, -122.7, 9, 10, "moist", "mild", "Mediterranean marine"],
@@ -99,6 +114,14 @@ function zoneFromF(tempF) {
 
 function cToF(c) {
   return c * 1.8 + 32;
+}
+
+function formatTemperature(celsius, digits = 1) {
+  return `${celsius.toFixed(digits)} C / ${cToF(celsius).toFixed(digits)} F`;
+}
+
+function formatTemperatureRange(minC, maxC) {
+  return `${minC}-${maxC} C / ${cToF(minC).toFixed(0)}-${cToF(maxC).toFixed(0)} F`;
 }
 
 function zoneRangeLabel(min, max) {
@@ -359,7 +382,7 @@ function plantSuitability(plant) {
     plant.humidityMin,
     plant.humidityMax
   );
-  const suitable = (seasonal || zoneFits) && heatDistance <= 3 && humidityDistance <= 12;
+  const suitable = (seasonal || zoneFits) && heatDistance <= 7 && humidityDistance <= 22;
   const score =
     100 -
     heatDistance * 6 -
@@ -368,7 +391,9 @@ function plantSuitability(plant) {
     (plant.popularity ?? 0) / 2;
   const reasons = [
     seasonal ? "Seasonal crop" : zoneFits ? `Hardy in zone ${state.zoneLabel}` : "Winter mismatch",
-    heatDistance === 0 ? "Heat match" : `${heatDistance.toFixed(0)} C outside preferred high`,
+    heatDistance === 0
+      ? "Heat match"
+      : `${heatDistance.toFixed(0)} C / ${(heatDistance * 1.8).toFixed(0)} F outside preferred high`,
     humidityDistance === 0
       ? "Humidity match"
       : `${humidityDistance.toFixed(0)}% outside preferred humidity`
@@ -378,7 +403,7 @@ function plantSuitability(plant) {
 
 function climateLabel(plant) {
   if (!plant.summerHighMinC || !plant.summerHighMaxC) return "";
-  return `${plant.summerHighMinC}-${plant.summerHighMaxC} C high, ${plant.humidityMin}-${plant.humidityMax}% RH`;
+  return `${formatTemperatureRange(plant.summerHighMinC, plant.summerHighMaxC)} high, ${plant.humidityMin}-${plant.humidityMax}% RH`;
 }
 
 function renderRegions() {
@@ -497,19 +522,118 @@ function renderAll() {
   renderPlants();
 }
 
-async function geocodeCity(city) {
+function parseLocationQuery(query) {
+  const cleaned = query.trim().replace(/\s+/g, " ");
+  const parts = cleaned.split(",").map((part) => part.trim()).filter(Boolean);
+  const trailingState = cleaned.match(/(?:,\s*|\s+)([A-Za-z]{2})$/);
+  const stateCode = trailingState?.[1]?.toUpperCase();
+  const stateName = usStates[stateCode] ?? "";
+  const cityName = stateName
+    ? cleaned.slice(0, trailingState.index).replace(/,$/, "").trim()
+    : parts[0];
+  return {
+    original: cleaned,
+    cityName: cityName || cleaned,
+    stateCode: stateName ? stateCode : "",
+    stateName
+  };
+}
+
+function normalize(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function locationScore(result, query) {
+  let score = 0;
+  if (normalize(result.name) === normalize(query.cityName)) score += 30;
+  if (query.stateName && normalize(result.admin1) === normalize(query.stateName)) score += 45;
+  if (query.stateCode && normalize(result.country_code) === "us") score += 20;
+  score += Math.min(10, Math.log10(Math.max(1, result.population ?? 1)));
+  return score;
+}
+
+async function searchOpenMeteo(query) {
   const url = new URL("https://geocoding-api.open-meteo.com/v1/search");
   url.search = new URLSearchParams({
-    name: city,
-    count: "1",
+    name: query.cityName,
+    count: "20",
     language: "en",
-    format: "json"
+    format: "json",
+    ...(query.stateCode ? { countryCode: "US" } : {})
   });
   const response = await fetch(url);
-  if (!response.ok) throw new Error("Could not geocode that city.");
+  if (!response.ok) return null;
   const data = await response.json();
-  if (!data.results?.length) throw new Error("No city match found.");
-  return data.results[0];
+  if (!data.results?.length) return null;
+  return data.results
+    .map((result) => ({ ...result, matchScore: locationScore(result, query) }))
+    .sort((a, b) => b.matchScore - a.matchScore)[0];
+}
+
+async function searchNominatim(query) {
+  const url = new URL("https://nominatim.openstreetmap.org/search");
+  url.search = new URLSearchParams({
+    q: query.stateName
+      ? `${query.cityName}, ${query.stateName}, United States`
+      : query.original,
+    format: "jsonv2",
+    addressdetails: "1",
+    limit: "10",
+    ...(query.stateCode ? { countrycodes: "us" } : {})
+  });
+  const response = await fetch(url, {
+    headers: { Accept: "application/json" }
+  });
+  if (!response.ok) return null;
+  const results = await response.json();
+  if (!results.length) return null;
+  const ranked = results
+    .map((result) => {
+      const address = result.address ?? {};
+      const normalized = {
+        name:
+          address.city ||
+          address.town ||
+          address.village ||
+          address.hamlet ||
+          result.name ||
+          query.cityName,
+        latitude: Number(result.lat),
+        longitude: Number(result.lon),
+        admin1: address.state || "",
+        admin2: address.county || "",
+        country: address.country || "",
+        country_code: String(address.country_code || "").toUpperCase(),
+        population: 0
+      };
+      return { ...normalized, matchScore: locationScore(normalized, query) };
+    })
+    .filter((result) => Number.isFinite(result.latitude) && Number.isFinite(result.longitude))
+    .sort((a, b) => b.matchScore - a.matchScore);
+  return ranked[0] ?? null;
+}
+
+async function geocodeCity(city) {
+  const query = parseLocationQuery(city);
+  let result = null;
+  try {
+    result = await searchOpenMeteo(query);
+  } catch {
+    result = null;
+  }
+  if (!result) {
+    try {
+      result = await searchNominatim(query);
+    } catch {
+      result = null;
+    }
+  }
+  if (!result) {
+    throw new Error(
+      `No location found for "${query.original}". Try "City, State" or include the country.`
+    );
+  }
+  return result;
 }
 
 function pastDate(yearsAgo) {
@@ -567,7 +691,7 @@ function monthlyValues(parameter) {
 
 async function fetchPowerNormals(place) {
   const params = new URLSearchParams({
-    parameters: "T2M_MAX,T2M_MIN,RH2M",
+    parameters: "T2M_MAX_AVG,T2M_MIN_AVG,RH2M",
     community: "AG",
     longitude: String(place.longitude),
     latitude: String(place.latitude),
@@ -579,8 +703,8 @@ async function fetchPowerNormals(place) {
   if (!response.ok) throw new Error("Could not fetch NASA POWER climate normals.");
   const data = await response.json();
   const parameters = data.properties?.parameter ?? {};
-  const maxValues = monthlyValues(parameters.T2M_MAX);
-  const minValues = monthlyValues(parameters.T2M_MIN);
+  const maxValues = monthlyValues(parameters.T2M_MAX_AVG);
+  const minValues = monthlyValues(parameters.T2M_MIN_AVG);
   const humidityValues = monthlyValues(parameters.RH2M);
 
   if (!maxValues.length || !minValues.length || !humidityValues.length) {
@@ -598,7 +722,7 @@ async function fetchPowerNormals(place) {
 
 async function hydrateRegionNormals() {
   if (state.regionClimateLoaded) return;
-  const cacheKey = "terratwin-region-normals-v2";
+  const cacheKey = "terratwin-region-normals-v3";
   const cached = JSON.parse(localStorage.getItem(cacheKey) || "{}");
   worldRegions.forEach((region) => {
     if (cached[region.name]) region.normals = cached[region.name];
@@ -668,9 +792,9 @@ async function runSearch(city) {
     $("#climateSummary").textContent =
       `USDA zone is estimated from recent historical annual low extremes. High, low, and humidity normals come from NASA POWER climatology near ${place.latitude.toFixed(2)}, ${place.longitude.toFixed(2)}.`;
     $("#zoneMetric").textContent = zone.label;
-    $("#coldMetric").textContent = `${climate.coldestC.toFixed(1)} C`;
-    $("#highMetric").textContent = `${climate.normals.warmestHighC.toFixed(1)} C`;
-    $("#lowMetric").textContent = `${climate.normals.coolestNormalLowC.toFixed(1)} C`;
+    $("#coldMetric").textContent = formatTemperature(climate.coldestC);
+    $("#highMetric").textContent = formatTemperature(climate.normals.warmestHighC);
+    $("#lowMetric").textContent = formatTemperature(climate.normals.coolestNormalLowC);
     $("#humidityMetric").textContent = `${climate.normals.meanHumidity.toFixed(0)}%`;
 
     renderCityPoint(place);
