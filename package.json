@@ -1,0 +1,12 @@
+{
+  "name": "climate-garden-map",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate:data": "node scripts/generate-plants.mjs",
+    "dev": "python3 -m http.server 5173",
+    "build": "npm run generate:data && node scripts/build.mjs",
+    "preview": "cd dist && python3 -m http.server 4173"
+  }
+}
