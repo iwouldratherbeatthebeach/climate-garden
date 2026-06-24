@@ -9,29 +9,24 @@ npm install
 npm run dev
 ```
 
-## Build for Cloudflare Pages
+## Build and deploy on Cloudflare
 
 ```bash
 npm run build
 ```
 
-For a Git-integrated Cloudflare Pages project, use these build settings:
+The project is configured as a Cloudflare Worker with static assets. This is
+compatible with the Workers Builds screen in the Cloudflare dashboard.
 
 - Build command: `npm run build`
-- Build output directory: `dist`
+- Deploy command: `npx wrangler deploy`
 - Node version: 24 or current LTS
 
-If the Cloudflare project uses a separate deploy command, set it to:
+The Wrangler configuration uploads `./dist` through Workers Static Assets. To
+build and deploy locally in one command, run:
 
 ```bash
 npm run deploy
-```
-
-Do not use `npx wrangler deploy` for this project. That command deploys a
-Worker. The `deploy` script builds the site and runs:
-
-```bash
-npx wrangler pages deploy dist --project-name=climate-garden-map
 ```
 
 ## Data model

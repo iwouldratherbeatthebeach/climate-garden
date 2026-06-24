@@ -1,3 +1,6 @@
-name = "climate-garden-map"
-pages_build_output_dir = "./dist"
+name = "climate-garden"
 compatibility_date = "2026-06-24"
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"

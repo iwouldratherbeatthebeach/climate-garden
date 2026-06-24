@@ -8,6 +8,6 @@
     "dev": "python3 -m http.server 5173",
     "build": "npm run generate:data && node scripts/build.mjs",
     "preview": "cd dist && python3 -m http.server 4173",
-    "deploy": "npm run build && npx wrangler pages deploy dist --project-name=climate-garden-map"
+    "deploy": "npm run build && npx wrangler deploy"
   }
 }
