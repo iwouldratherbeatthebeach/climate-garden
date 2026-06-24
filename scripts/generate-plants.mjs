@@ -16,6 +16,29 @@ const forms = [
   { name: "Urban", shift: 1, pop: 5 }
 ];
 
+const originCountries = {
+  "South Asia": ["IND", "PAK", "BGD", "LKA", "NPL", "BTN"],
+  "Southeast Asia": ["THA", "VNM", "KHM", "LAO", "MMR", "MYS", "IDN", "PHL", "SGP", "BRN", "TLS"],
+  Mediterranean: ["ESP", "PRT", "FRA", "ITA", "GRC", "TUR", "CYP", "MLT", "MAR", "DZA", "TUN", "EGY", "ISR", "LBN", "SYR", "HRV", "ALB", "MNE"],
+  "Western Asia": ["TUR", "IRN", "IRQ", "SYR", "LBN", "ISR", "JOR", "ARM", "AZE", "GEO"],
+  Eurasia: ["FRA", "DEU", "POL", "UKR", "RUS", "KAZ", "MNG"],
+  "East Asia": ["CHN", "JPN", "KOR", "PRK", "MNG", "TWN"],
+  Europe: ["GBR", "IRL", "FRA", "ESP", "PRT", "DEU", "ITA", "GRC", "POL", "NLD", "BEL", "CHE", "AUT", "CZE", "SVK", "HUN", "ROU", "BGR", "HRV", "SRB", "UKR"],
+  "Northern Hemisphere": ["CAN", "USA", "GBR", "FRA", "DEU", "RUS", "CHN", "JPN"],
+  Mexico: ["MEX"],
+  "Central Asia": ["KAZ", "KGZ", "TJK", "TKM", "UZB", "AFG"],
+  "North America": ["CAN", "USA", "MEX"],
+  "South America": ["ARG", "BOL", "BRA", "CHL", "COL", "ECU", "GUY", "PRY", "PER", "SUR", "URY", "VEN"],
+  Asia: ["CHN", "IND", "JPN", "KOR", "THA", "VNM", "IDN", "PHL", "MYS", "PAK", "IRN", "TUR", "KAZ"],
+  Americas: ["CAN", "USA", "MEX", "BRA", "ARG", "CHL", "PER", "COL", "ECU", "BOL", "VEN", "GTM", "CRI", "CUB"],
+  China: ["CHN"],
+  Iran: ["IRN"],
+  Africa: ["ZAF", "ETH", "KEN", "TZA", "UGA", "NGA", "GHA", "CMR", "AGO", "ZMB", "ZWE", "MOZ", "MDG"],
+  Andes: ["COL", "ECU", "PER", "BOL", "CHL", "ARG"],
+  "Central America": ["BLZ", "GTM", "HND", "SLV", "NIC", "CRI", "PAN"],
+  Balkans: ["ALB", "BIH", "BGR", "HRV", "GRC", "MNE", "MKD", "ROU", "SRB", "SVN"]
+};
+
 const bases = [
   ["Basil", "Ocimum basilicum", "herbs", "annual herb", 10, 13, "Full sun", "Even moisture", "South Asia"],
   ["Thai Basil", "Ocimum basilicum var. thyrsiflora", "herbs", "annual herb", 10, 13, "Full sun", "Even moisture", "Southeast Asia"],
@@ -193,6 +216,8 @@ const plants = bases.flatMap((base, baseIndex) => {
     return {
       id: `${category}-${baseIndex + 1}-${formIndex + 1}`,
       commonName: `${form.name} ${commonName}`,
+      baseName: commonName,
+      climateForm: form.name,
       scientificName,
       category,
       type,
@@ -201,6 +226,7 @@ const plants = bases.flatMap((base, baseIndex) => {
       sun,
       water,
       origin,
+      originCountries: originCountries[origin] ?? [],
       ...climate,
       popularity: form.pop + (zoneMax - zoneMin)
     };

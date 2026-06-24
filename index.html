@@ -8,12 +8,6 @@
       content="Find global climate analogs and outdoor plants for your city using USDA hardiness zones."
     />
     <title>TerraTwin Garden Map</title>
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      integrity="sha256-p4NxAoJBhIINfQ9d8tK2KpRr9RChQSHQvgijK5jJkT8="
-      crossorigin=""
-    />
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
@@ -42,11 +36,17 @@
 
       <main class="layout">
         <section class="map-panel" aria-label="Global climate analog map">
-          <div id="map"></div>
+          <svg
+            id="map"
+            viewBox="0 0 1000 500"
+            role="img"
+            aria-label="Clickable flat world climate map"
+          ></svg>
+          <div id="mapStatus" class="map-status">Loading country boundaries...</div>
           <div class="map-legend">
             <span><i class="legend-dot exact"></i>Close analog</span>
             <span><i class="legend-dot near"></i>Near match</span>
-            <span><i class="legend-dot dim"></i>Other region</span>
+            <span><i class="legend-dot dim"></i>Low match</span>
           </div>
         </section>
 
@@ -96,15 +96,15 @@
               <button class="chip" data-category="vegetables" type="button">Vegetables</button>
               <button class="chip" data-category="decorative" type="button">Decorative</button>
             </div>
-            <label class="toggle">
-              <input id="strictZone" type="checkbox" checked />
-              <span>Only show plants whose listed zone range includes my zone</span>
-            </label>
+            <div class="country-filter">
+              <span id="countryFilter">All origins</span>
+              <button id="clearCountry" type="button" hidden>Clear country</button>
+            </div>
           </section>
 
           <section class="regions">
             <div class="section-title">
-              <h2>World regions</h2>
+              <h2>Climate matches</h2>
               <span id="regionCount">0 shown</span>
             </div>
             <div id="regionsList" class="regions-list"></div>
@@ -121,11 +121,6 @@
       </main>
     </div>
 
-    <script
-      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-      crossorigin=""
-    ></script>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

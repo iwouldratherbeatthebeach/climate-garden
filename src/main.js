@@ -9,9 +9,11 @@ const state = {
   coldestC: null,
   normals: null,
   regionClimateLoaded: false,
-  matchingRegions: [],
-  regionLayers: new Map(),
-  cityLayer: null
+  countryFeatures: [],
+  countryElements: new Map(),
+  selectedCountry: null,
+  cityLayer: null,
+  mapReady: false
 };
 
 const categoryLabels = {
@@ -84,18 +86,7 @@ const worldRegions = [
   description
 }));
 
-const map = L.map("map", {
-  zoomControl: false,
-  worldCopyJump: true,
-  minZoom: 2,
-  maxZoom: 8
-}).setView([23, 0], 2);
-
-L.control.zoom({ position: "bottomright" }).addTo(map);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19,
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-}).addTo(map);
+const map = $("#map");
 
 function zoneFromF(tempF) {
   const zone = Math.min(13, Math.max(1, Math.floor((tempF + 60) / 10) + 1));
@@ -120,99 +111,269 @@ function setLoading(isLoading) {
   $("#cityForm button").textContent = isLoading ? "Searching..." : "Find matches";
 }
 
-function scoreRegion(region, zone) {
-  if (!zone) return 0;
-  let score = 0;
-  if (zone >= region.zoneMin && zone <= region.zoneMax) score += 14;
-  else {
-    const distance = Math.min(Math.abs(zone - region.zoneMin), Math.abs(zone - region.zoneMax));
-    score += Math.max(0, 8 - distance * 2);
-  }
-
-  if (state.normals && region.normals) {
-    const heatDiff = Math.abs(state.normals.warmestHighC - region.normals.warmestHighC);
-    const lowDiff = Math.abs(state.normals.coolestNormalLowC - region.normals.coolestNormalLowC);
-    const humidityDiff = Math.abs(state.normals.meanHumidity - region.normals.meanHumidity);
-    score += Math.max(0, 10 - heatDiff);
-    score += Math.max(0, 8 - lowDiff / 2);
-    score += Math.max(0, 8 - humidityDiff / 4);
-  }
-
-  return score;
+function countryCode(properties) {
+  const candidates = [
+    properties.ADM0_A3,
+    properties.ISO_A3,
+    properties.SOV_A3,
+    properties.ADM0_TLC
+  ];
+  return candidates.find((value) => value && value !== "-99") ?? "";
 }
 
-function regionStyle(score) {
-  if (score >= 30) {
-    return { radius: 18, color: "#155c38", fillColor: "#2f7d4f", fillOpacity: 0.72, weight: 2 };
-  }
-  if (score >= 20) {
-    return { radius: 13, color: "#9c6f17", fillColor: "#e9b44c", fillOpacity: 0.62, weight: 2 };
-  }
-  return { radius: 8, color: "#65766c", fillColor: "#7d9084", fillOpacity: 0.28, weight: 1 };
+function countryName(properties) {
+  return properties.NAME_EN || properties.NAME_LONG || properties.ADMIN || properties.NAME;
 }
 
-function renderRegionLayers() {
-  worldRegions.forEach((region) => {
-    const score = scoreRegion(region, state.zone);
-    const existing = state.regionLayers.get(region.name);
-    if (existing) {
-      existing.setStyle(regionStyle(score));
-      existing.setRadius(regionStyle(score).radius);
-      return;
+function countryKey(feature) {
+  return countryCode(feature.properties) || countryName(feature.properties);
+}
+
+function setMapStatus(message = "") {
+  const status = $("#mapStatus");
+  status.textContent = message;
+  status.hidden = !message;
+}
+
+function countryStyle(feature) {
+  const selected =
+    state.selectedCountry && countryCode(feature.properties) === state.selectedCountry.code;
+  const score = feature.properties.climateSimilarity;
+  let fillColor = "#809188";
+  let fillOpacity = state.zone ? 0.12 : 0.18;
+
+  if (score >= 76) {
+    fillColor = "#2f7d4f";
+    fillOpacity = 0.72;
+  } else if (score >= 60) {
+    fillColor = "#e9b44c";
+    fillOpacity = 0.58;
+  } else if (state.zone) {
+    fillColor = "#718279";
+    fillOpacity = 0.16;
+  }
+
+  return {
+    color: selected ? "#d46a4c" : "#fffaf0",
+    fillColor,
+    fillOpacity,
+    weight: selected ? 3 : 0.8,
+    opacity: selected ? 1 : 0.72
+  };
+}
+
+function refreshCountryStyles() {
+  state.countryElements.forEach((element, key) => {
+    const feature = state.countryFeatures.find((item) => countryKey(item) === key);
+    if (!feature) return;
+    const style = countryStyle(feature);
+    element.setAttribute("fill", style.fillColor);
+    element.setAttribute("fill-opacity", String(style.fillOpacity));
+    element.setAttribute("stroke", style.color);
+    element.setAttribute("stroke-width", String(style.weight));
+    element.setAttribute("stroke-opacity", String(style.opacity));
+    const title = element.querySelector("title");
+    if (title) {
+      const score = feature.properties.climateSimilarity;
+      title.textContent = Number.isFinite(score)
+        ? `${countryName(feature.properties)}: ${Math.round(score)}% representative climate match`
+        : `${countryName(feature.properties)}: click to view suitable plants`;
     }
-
-    const marker = L.circleMarker([region.lat, region.lon], regionStyle(score))
-      .bindPopup(regionPopup(region))
-      .addTo(map);
-    marker.on("click", () => {
-      map.flyTo([region.lat, region.lon], 5, { duration: 0.8 });
-    });
-    state.regionLayers.set(region.name, marker);
   });
 }
 
-function regionPopup(region) {
-  const climate = region.normals
-    ? `<br>Warmest high ${region.normals.warmestHighC.toFixed(1)} C<br>Coolest low ${region.normals.coolestNormalLowC.toFixed(1)} C<br>Humidity ${region.normals.meanHumidity.toFixed(0)}%`
-    : "<br>Climate normals load after city search";
-  return `<strong>${region.name}</strong><br>${zoneRangeLabel(region.zoneMin, region.zoneMax)}<br>${region.description}${climate}`;
+function projectCoordinate([lon, lat]) {
+  return [((lon + 180) / 360) * 1000, ((90 - lat) / 180) * 500];
 }
 
-function plantScore(plant, zone) {
-  if (!zone) return 0;
-  let score = 0;
-  if (zone >= plant.zoneMin && zone <= plant.zoneMax) score += 20;
-  else {
-    const distance = Math.min(Math.abs(zone - plant.zoneMin), Math.abs(zone - plant.zoneMax));
-    score += Math.max(0, 8 - distance * 2);
+function ringPath(ring) {
+  let path = "";
+  let previousLon = null;
+  ring.forEach((coordinate, index) => {
+    const [x, y] = projectCoordinate(coordinate);
+    const startsNewSegment =
+      index === 0 ||
+      (previousLon !== null && Math.abs(coordinate[0] - previousLon) > 180);
+    path += `${startsNewSegment ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+    previousLon = coordinate[0];
+  });
+  return `${path}Z`;
+}
+
+function geometryPath(geometry) {
+  if (geometry.type === "Polygon") {
+    return geometry.coordinates.map(ringPath).join("");
+  }
+  if (geometry.type === "MultiPolygon") {
+    return geometry.coordinates
+      .flatMap((polygon) => polygon.map(ringPath))
+      .join("");
+  }
+  return "";
+}
+
+function toRadians(value) {
+  return (value * Math.PI) / 180;
+}
+
+function distanceKm(aLat, aLon, bLat, bLon) {
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(bLat - aLat);
+  const dLon = toRadians(bLon - aLon);
+  const lat1 = toRadians(aLat);
+  const lat2 = toRadians(bLat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function nearestClimateRegion(feature) {
+  const lat = Number(feature.properties.LABEL_Y ?? feature.properties.centerLat);
+  const lon = Number(feature.properties.LABEL_X ?? feature.properties.centerLon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return worldRegions
+    .filter((region) => region.normals)
+    .map((region) => ({ region, distance: distanceKm(lat, lon, region.lat, region.lon) }))
+    .sort((a, b) => a.distance - b.distance)[0]?.region;
+}
+
+function climateSimilarity(region) {
+  if (!state.normals || !region?.normals) return null;
+  const heatDiff = Math.abs(state.normals.warmestHighC - region.normals.warmestHighC);
+  const lowDiff = Math.abs(
+    state.normals.coolestNormalLowC - region.normals.coolestNormalLowC
+  );
+  const humidityDiff = Math.abs(state.normals.meanHumidity - region.normals.meanHumidity);
+  const zoneDistance =
+    state.zone >= region.zoneMin && state.zone <= region.zoneMax
+      ? 0
+      : Math.min(
+          Math.abs(state.zone - region.zoneMin),
+          Math.abs(state.zone - region.zoneMax)
+        );
+
+  return Math.max(
+    0,
+    Math.min(100, 100 - heatDiff * 2.2 - lowDiff * 1.35 - humidityDiff * 0.9 - zoneDistance * 8)
+  );
+}
+
+function scoreCountries() {
+  state.countryFeatures.forEach((feature) => {
+    const region = nearestClimateRegion(feature);
+    feature.properties.climateRegion = region?.name ?? "";
+    feature.properties.climateSimilarity = climateSimilarity(region);
+  });
+}
+
+function selectCountry(feature) {
+  const properties = feature.properties;
+  state.selectedCountry = {
+    code: countryCode(properties),
+    name: countryName(properties),
+    feature
+  };
+  $("#countryFilter").textContent = `Origin: ${state.selectedCountry.name}`;
+  $("#clearCountry").hidden = false;
+  refreshCountryStyles();
+  renderRegions();
+  renderPlants();
+}
+
+async function loadCountries() {
+  const sources = [
+    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson",
+    "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_110m_admin_0_countries.geojson"
+  ];
+  let data;
+  for (const source of sources) {
+    try {
+      const response = await fetch(source);
+      if (!response.ok) continue;
+      data = await response.json();
+      break;
+    } catch {
+      // Try the next public mirror.
+    }
+  }
+  if (!data?.features?.length) {
+    throw new Error("Country boundaries could not be loaded. Check network or content blocking.");
   }
 
-  if (state.normals) {
-    const heat = state.normals.warmestHighC;
-    const humidity = state.normals.meanHumidity;
-    if (heat >= plant.summerHighMinC && heat <= plant.summerHighMaxC) {
-      score += 12;
-    } else {
-      const heatDistance = Math.min(
-        Math.abs(heat - plant.summerHighMinC),
-        Math.abs(heat - plant.summerHighMaxC)
-      );
-      score += Math.max(0, 9 - heatDistance);
-    }
+  const svgNamespace = "http://www.w3.org/2000/svg";
+  state.countryFeatures = data.features.filter((feature) => feature.geometry);
+  state.countryElements.clear();
+  map.replaceChildren();
 
-    if (humidity >= plant.humidityMin && humidity <= plant.humidityMax) {
-      score += 8;
-    } else {
-      const humidityDistance = Math.min(
-        Math.abs(humidity - plant.humidityMin),
-        Math.abs(humidity - plant.humidityMax)
-      );
-      score += Math.max(0, 7 - humidityDistance / 4);
-    }
-  }
+  state.countryFeatures.forEach((feature) => {
+    const pathData = geometryPath(feature.geometry);
+    if (!pathData) return;
+    const path = document.createElementNS(svgNamespace, "path");
+    const title = document.createElementNS(svgNamespace, "title");
+    path.setAttribute("d", pathData);
+    path.setAttribute("class", "country-shape");
+    path.setAttribute("tabindex", "0");
+    path.setAttribute("role", "button");
+    path.setAttribute("aria-label", `Select ${countryName(feature.properties)}`);
+    path.addEventListener("click", () => selectCountry(feature));
+    path.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectCountry(feature);
+      }
+    });
+    title.textContent = `${countryName(feature.properties)}: click to view suitable plants`;
+    path.append(title);
+    map.append(path);
+    state.countryElements.set(countryKey(feature), path);
+  });
+  refreshCountryStyles();
+  state.mapReady = true;
+  setMapStatus("");
+}
 
-  score += (plant.popularity ?? 0) / 2;
-  return score;
+function isSeasonalPlant(plant) {
+  return /annual|biennial|warm-season|cool-season|root crop|bulb crop|tuber crop/i.test(
+    plant.type
+  );
+}
+
+function distanceFromRange(value, min, max) {
+  if (value >= min && value <= max) return 0;
+  return Math.min(Math.abs(value - min), Math.abs(value - max));
+}
+
+function plantSuitability(plant) {
+  if (!state.zone || !state.normals) return { suitable: false, score: 0, reasons: [] };
+
+  const seasonal = isSeasonalPlant(plant);
+  const zoneFits = state.zone >= plant.zoneMin && state.zone <= plant.zoneMax;
+  const heatDistance = distanceFromRange(
+    state.normals.warmestHighC,
+    plant.summerHighMinC,
+    plant.summerHighMaxC
+  );
+  const humidityDistance = distanceFromRange(
+    state.normals.meanHumidity,
+    plant.humidityMin,
+    plant.humidityMax
+  );
+  const suitable = (seasonal || zoneFits) && heatDistance <= 3 && humidityDistance <= 12;
+  const score =
+    100 -
+    heatDistance * 6 -
+    humidityDistance * 1.5 -
+    (!seasonal && !zoneFits ? 50 : 0) +
+    (plant.popularity ?? 0) / 2;
+  const reasons = [
+    seasonal ? "Seasonal crop" : zoneFits ? `Hardy in zone ${state.zoneLabel}` : "Winter mismatch",
+    heatDistance === 0 ? "Heat match" : `${heatDistance.toFixed(0)} C outside preferred high`,
+    humidityDistance === 0
+      ? "Humidity match"
+      : `${humidityDistance.toFixed(0)}% outside preferred humidity`
+  ];
+  return { suitable, score, reasons };
 }
 
 function climateLabel(plant) {
@@ -221,59 +382,87 @@ function climateLabel(plant) {
 }
 
 function renderRegions() {
-  const regions = state.zone
-    ? worldRegions
-        .map((region) => ({ ...region, score: scoreRegion(region, state.zone) }))
-        .filter((region) => region.score >= (state.regionClimateLoaded ? 18 : 1))
-        .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
-    : worldRegions.slice(0, 10).map((region) => ({ ...region, score: 0 }));
+  if (!state.zone) {
+    $("#regionMetric").textContent = "--";
+    $("#regionCount").textContent = "Search first";
+    $("#regionsList").innerHTML =
+      `<p class="empty">Enter a city to highlight countries with similar representative climate.</p>`;
+    return;
+  }
 
-  state.matchingRegions = regions;
-  $("#regionMetric").textContent = state.zone ? String(regions.length) : "--";
-  $("#regionCount").textContent = `${regions.length} shown`;
-  $("#regionsList").innerHTML = regions
-    .slice(0, 14)
+  const countries = state.countryFeatures
+    .filter((feature) => Number(feature.properties.climateSimilarity) >= 60)
+    .sort(
+      (a, b) =>
+        b.properties.climateSimilarity - a.properties.climateSimilarity ||
+        countryName(a.properties).localeCompare(countryName(b.properties))
+    );
+
+  $("#regionMetric").textContent = state.regionClimateLoaded ? String(countries.length) : "...";
+  $("#regionCount").textContent = state.regionClimateLoaded
+    ? `${countries.length} countries`
+    : "Calculating...";
+  $("#regionsList").innerHTML = countries
+    .slice(0, 16)
     .map(
-      (region) => `
-        <article class="region-card" data-region="${region.name}">
+      (feature) => `
+        <article class="region-card ${
+          state.selectedCountry?.code === countryCode(feature.properties) ? "active" : ""
+        }" data-country="${countryCode(feature.properties)}">
           <div class="card-top">
             <div>
-              <strong>${region.name}</strong>
-              <span class="subtle">${region.description}${region.normals ? ` · ${region.normals.warmestHighC.toFixed(0)} C high · ${region.normals.meanHumidity.toFixed(0)}% RH` : ""}</span>
+              <strong>${countryName(feature.properties)}</strong>
+              <span class="subtle">${feature.properties.climateRegion || "Representative climate point"}</span>
             </div>
-            <span class="badge">${zoneRangeLabel(region.zoneMin, region.zoneMax)}</span>
+            <span class="badge">${Math.round(feature.properties.climateSimilarity)}% match</span>
           </div>
         </article>
       `
     )
-    .join("");
+    .join("") || `<p class="empty">Climate comparisons are still loading.</p>`;
 
   document.querySelectorAll(".region-card").forEach((card) => {
     card.addEventListener("click", () => {
-      const region = worldRegions.find((item) => item.name === card.dataset.region);
-      if (region) map.flyTo([region.lat, region.lon], 5, { duration: 0.8 });
+      const feature = state.countryFeatures.find(
+        (item) => countryCode(item.properties) === card.dataset.country
+      );
+      if (feature) selectCountry(feature);
     });
   });
 }
 
 function renderPlants() {
-  const strict = $("#strictZone").checked;
-  let plants = state.plants;
+  if (!state.zone || !state.normals) {
+    $("#plantCount").textContent = "Search first";
+    $("#plantsList").innerHTML =
+      `<p class="empty">Enter your city before browsing recommendations. Plants are only shown after climate suitability can be checked.</p>`;
+    return;
+  }
 
+  let plants = state.plants;
   if (state.activeCategory !== "all") {
     plants = plants.filter((plant) => plant.category === state.activeCategory);
   }
 
-  if (state.zone && strict) {
-    plants = plants.filter((plant) => state.zone >= plant.zoneMin && state.zone <= plant.zoneMax);
+  if (state.selectedCountry) {
+    plants = plants.filter((plant) =>
+      (plant.originCountries ?? []).includes(state.selectedCountry.code)
+    );
   }
 
   plants = plants
-    .map((plant) => ({ ...plant, score: plantScore(plant, state.zone) }))
+    .map((plant) => ({ ...plant, match: plantSuitability(plant) }))
+    .filter((plant) => plant.match.suitable)
+    .map((plant) => ({ ...plant, score: plant.match.score }))
     .sort((a, b) => b.score - a.score || a.commonName.localeCompare(b.commonName))
-    .slice(0, 80);
+    .filter(
+      (plant, index, all) =>
+        all.findIndex((candidate) => candidate.scientificName === plant.scientificName) === index
+    )
+    .slice(0, 60);
 
-  $("#plantCount").textContent = `${plants.length} of ${state.plants.length.toLocaleString()} shown`;
+  const originLabel = state.selectedCountry ? ` from ${state.selectedCountry.name}` : "";
+  $("#plantCount").textContent = `${plants.length} suitable${originLabel}`;
   $("#plantsList").innerHTML =
     plants
       .map(
@@ -281,27 +470,29 @@ function renderPlants() {
           <article class="plant-card">
             <div class="card-top">
               <div>
-                <strong>${plant.commonName}</strong>
+                <strong>${plant.baseName ?? plant.commonName}</strong>
                 <span class="subtle"><em>${plant.scientificName}</em></span>
               </div>
               <span class="badge">${categoryLabels[plant.category]}</span>
             </div>
             <div class="plant-meta">
-              <span>${zoneRangeLabel(plant.zoneMin, plant.zoneMax)}</span>
+              <span>${isSeasonalPlant(plant) ? "Seasonal" : zoneRangeLabel(plant.zoneMin, plant.zoneMax)}</span>
               <span>${plant.type}</span>
               <span>${plant.sun}</span>
               <span>${plant.water}</span>
               <span>${climateLabel(plant)}</span>
               <span>${plant.origin}</span>
+              <span>${plant.climateForm} profile</span>
             </div>
           </article>
         `
       )
-      .join("") || `<p class="empty">No plants match that filter yet. Try another category or turn off strict zone matching.</p>`;
+      .join("") ||
+    `<p class="empty">No plants from this origin pass the current zone, heat, and humidity checks in this category. Try another plant type or country.</p>`;
 }
 
 function renderAll() {
-  renderRegionLayers();
+  refreshCountryStyles();
   renderRegions();
   renderPlants();
 }
@@ -407,14 +598,15 @@ async function fetchPowerNormals(place) {
 
 async function hydrateRegionNormals() {
   if (state.regionClimateLoaded) return;
-  const cacheKey = "terratwin-region-normals-v1";
+  const cacheKey = "terratwin-region-normals-v2";
   const cached = JSON.parse(localStorage.getItem(cacheKey) || "{}");
   worldRegions.forEach((region) => {
     if (cached[region.name]) region.normals = cached[region.name];
   });
 
   const missing = worldRegions.filter((region) => !region.normals);
-  const workers = Array.from({ length: 6 }, async () => {
+  let completed = worldRegions.length - missing.length;
+  const workers = Array.from({ length: 4 }, async () => {
     while (missing.length) {
       const region = missing.shift();
       try {
@@ -426,20 +618,38 @@ async function hydrateRegionNormals() {
       } catch {
         region.normals = null;
       }
+      completed += 1;
+      if (completed % 5 === 0) {
+        setMapStatus(`Comparing world climates ${completed}/${worldRegions.length}...`);
+      }
     }
   });
 
   await Promise.all(workers);
   localStorage.setItem(cacheKey, JSON.stringify(cached));
   state.regionClimateLoaded = true;
-  state.regionLayers.forEach((layer, name) => {
-    const region = worldRegions.find((item) => item.name === name);
-    if (region) layer.setPopupContent(regionPopup(region));
-  });
+  scoreCountries();
+  setMapStatus("");
+}
+
+function renderCityPoint(place) {
+  state.cityLayer?.remove();
+  const [x, y] = projectCoordinate([place.longitude, place.latitude]);
+  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+  circle.setAttribute("cx", x.toFixed(2));
+  circle.setAttribute("cy", y.toFixed(2));
+  circle.setAttribute("r", "7");
+  circle.setAttribute("class", "city-point");
+  title.textContent = `${place.name}, estimated USDA zone ${state.zoneLabel}`;
+  circle.append(title);
+  map.append(circle);
+  state.cityLayer = circle;
 }
 
 async function runSearch(city) {
   setLoading(true);
+  let cityReady = false;
   try {
     const place = await geocodeCity(city);
     const climate = await fetchClimate(place);
@@ -450,6 +660,9 @@ async function runSearch(city) {
     state.zoneLabel = zone.label;
     state.coldestC = climate.coldestC;
     state.normals = climate.normals;
+    state.selectedCountry = null;
+    $("#countryFilter").textContent = "All origins";
+    $("#clearCountry").hidden = true;
 
     $("#placeTitle").textContent = `${place.name}${place.admin1 ? `, ${place.admin1}` : ""}`;
     $("#climateSummary").textContent =
@@ -460,35 +673,46 @@ async function runSearch(city) {
     $("#lowMetric").textContent = `${climate.normals.coolestNormalLowC.toFixed(1)} C`;
     $("#humidityMetric").textContent = `${climate.normals.meanHumidity.toFixed(0)}%`;
 
-    if (state.cityLayer) state.cityLayer.remove();
-    state.cityLayer = L.circleMarker([place.latitude, place.longitude], {
-      radius: 9,
-      color: "#10291f",
-      fillColor: "#d46a4c",
-      fillOpacity: 0.92,
-      weight: 3
-    })
-      .bindPopup(`<strong>${place.name}</strong><br>Estimated USDA zone ${zone.label}`)
-      .addTo(map);
-
-    map.flyTo([place.latitude, place.longitude], 5, { duration: 0.8 });
+    renderCityPoint(place);
     renderAll();
-    $("#regionCount").textContent = "Loading climate normals...";
-    await hydrateRegionNormals();
-    renderAll();
+    cityReady = true;
+    setLoading(false);
+    setMapStatus("Comparing representative climates around the world...");
+    hydrateRegionNormals()
+      .then(() => {
+        scoreCountries();
+        renderAll();
+      })
+      .catch(() => {
+        setMapStatus("Some global climate comparisons could not be loaded.");
+      });
   } catch (error) {
     $("#climateSummary").textContent = error.message;
+    setMapStatus("");
   } finally {
-    setLoading(false);
+    if (!cityReady) setLoading(false);
   }
 }
 
 async function init() {
-  renderRegionLayers();
-  renderRegions();
+  const [plantsResult, countriesResult] = await Promise.allSettled([
+    fetch("/plants.json").then((response) => {
+      if (!response.ok) throw new Error("Plant database could not be loaded.");
+      return response.json();
+    }),
+    loadCountries()
+  ]);
 
-  const response = await fetch("/plants.json");
-  state.plants = await response.json();
+  if (plantsResult.status === "fulfilled") {
+    state.plants = plantsResult.value;
+  } else {
+    $("#plantCount").textContent = "Unavailable";
+    $("#plantsList").innerHTML = `<p class="empty">${plantsResult.reason.message}</p>`;
+  }
+  if (countriesResult.status === "rejected") {
+    setMapStatus(countriesResult.reason.message);
+  }
+  renderRegions();
   renderPlants();
 
   $("#cityForm").addEventListener("submit", (event) => {
@@ -506,7 +730,14 @@ async function init() {
     });
   });
 
-  $("#strictZone").addEventListener("change", renderPlants);
+  $("#clearCountry").addEventListener("click", () => {
+    state.selectedCountry = null;
+    $("#countryFilter").textContent = "All origins";
+    $("#clearCountry").hidden = true;
+    refreshCountryStyles();
+    renderRegions();
+    renderPlants();
+  });
 }
 
 init();

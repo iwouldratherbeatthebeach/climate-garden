@@ -146,21 +146,36 @@ input {
 }
 
 #map {
+  display: block;
   width: 100%;
   height: 100%;
   min-height: 32rem;
-}
-
-.leaflet-container {
   background: #cfe2d7;
-  font: inherit;
+  touch-action: manipulation;
 }
 
-.leaflet-popup-content-wrapper,
-.leaflet-popup-tip {
-  background: #fffaf0;
-  color: var(--ink);
-  box-shadow: 0 12px 36px rgba(16, 41, 31, 0.18);
+.country-shape {
+  cursor: pointer;
+  vector-effect: non-scaling-stroke;
+  transition:
+    fill 160ms ease,
+    fill-opacity 160ms ease,
+    stroke 160ms ease;
+}
+
+.country-shape:hover,
+.country-shape:focus {
+  stroke: #10291f;
+  stroke-width: 2;
+  outline: none;
+}
+
+.city-point {
+  fill: var(--terracotta);
+  stroke: #10291f;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 .map-legend {
@@ -177,6 +192,28 @@ input {
   background: rgba(255, 250, 240, 0.9);
   box-shadow: 0 10px 28px rgba(20, 35, 27, 0.12);
   font-size: 0.78rem;
+}
+
+.map-status {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  z-index: 600;
+  max-width: calc(100% - 2rem);
+  transform: translateX(-50%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.58rem 0.8rem;
+  background: rgba(255, 250, 240, 0.94);
+  box-shadow: 0 8px 24px rgba(20, 35, 27, 0.14);
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.map-status[hidden] {
+  display: none;
 }
 
 .legend-dot {
@@ -300,14 +337,24 @@ h1 {
   color: #fff8e8;
 }
 
-.toggle {
+.country-filter {
   display: flex;
-  align-items: start;
-  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   margin-top: 0.8rem;
   color: var(--muted);
   font-size: 0.85rem;
   line-height: 1.4;
+}
+
+.country-filter button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--leaf-dark);
+  cursor: pointer;
+  font-weight: 850;
 }
 
 .section-title {
@@ -351,6 +398,11 @@ h1 {
 
 .region-card {
   cursor: pointer;
+}
+
+.region-card.active {
+  border-color: var(--terracotta);
+  box-shadow: 0 0 0 2px rgba(212, 106, 76, 0.14);
 }
 
 .region-card:hover,
